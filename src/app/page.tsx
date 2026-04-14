@@ -10,6 +10,7 @@ import { Portfolio } from "@/components/Portfolio";
 import { RepairFlow } from "@/components/RepairFlow";
 import { Activity } from "@/components/Activity";
 import { fetchEarnVaults, fetchPortfolioPositions, fetchLifiChains, fetchLifiProtocols } from "@/lib/lifi-client";
+import type { LifiChain, LifiProtocol } from "@/lib/lifi-client";
 import { evaluatePortfolio } from "@/lib/policy-engine";
 import { loadPolicy, savePolicy } from "@/lib/store";
 import { DEMO_POSITIONS, DEMO_VAULTS, DEMO_POLICY } from "@/lib/demo-data";
@@ -30,6 +31,8 @@ export default function Home() {
   // LI.FI coverage data
   const [lifiChainCount, setLifiChainCount] = useState<number>(0);
   const [lifiProtocolCount, setLifiProtocolCount] = useState<number>(0);
+  const [liveChains, setLiveChains] = useState<LifiChain[]>([]);
+  const [liveProtocols, setLiveProtocols] = useState<LifiProtocol[]>([]);
 
   // Loading states
   const [vaultsLoading, setVaultsLoading] = useState(false);
@@ -60,8 +63,14 @@ export default function Home() {
         fetchLifiChains(),
         fetchLifiProtocols(),
       ]);
-      if (chains.length > 0) setLifiChainCount(chains.length);
-      if (protocols.length > 0) setLifiProtocolCount(protocols.length);
+      if (chains.length > 0) {
+        setLifiChainCount(chains.length);
+        setLiveChains(chains);
+      }
+      if (protocols.length > 0) {
+        setLifiProtocolCount(protocols.length);
+        setLiveProtocols(protocols);
+      }
     }
     loadCoverage();
   }, []);
@@ -106,11 +115,13 @@ export default function Home() {
     }
   }, [activePositions, activePolicy, activeVaults]);
 
-  // Extract protocols from vaults
+  // Extract protocols from vaults + live LI.FI protocols
   useEffect(() => {
-    const protocols = [...new Set(activeVaults.map((v) => v.protocolName))].sort();
-    setAvailableProtocols(protocols);
-  }, [activeVaults]);
+    const vaultProtos = [...new Set(activeVaults.map((v) => v.protocolName))];
+    const lifiProtos = liveProtocols.map(p => p.name).filter(n => n !== "Unknown");
+    const merged = [...new Set([...vaultProtos, ...lifiProtos])].sort();
+    setAvailableProtocols(merged);
+  }, [activeVaults, liveProtocols]);
 
   // Initial loads
   useEffect(() => {
@@ -175,10 +186,10 @@ export default function Home() {
           <Dashboard positions={evaluatedPositions} policy={activePolicy} vaults={activeVaults} onNavigate={setActiveTab} lifiChainCount={lifiChainCount} lifiProtocolCount={lifiProtocolCount} />
         )}
         {activeTab === "vaults" && (
-          <VaultExplorer vaults={activeVaults} loading={vaultsLoading} policy={activePolicy} onDepositClick={handleDepositClick} lifiChainCount={lifiChainCount} lifiProtocolCount={lifiProtocolCount} />
+          <VaultExplorer vaults={activeVaults} loading={vaultsLoading} policy={activePolicy} onDepositClick={handleDepositClick} lifiChainCount={lifiChainCount} lifiProtocolCount={lifiProtocolCount} liveChains={liveChains} />
         )}
         {activeTab === "policy" && (
-          <PolicyBuilder onPolicyChange={handlePolicyChange} availableProtocols={availableProtocols} />
+          <PolicyBuilder onPolicyChange={handlePolicyChange} availableProtocols={availableProtocols} liveChains={liveChains} />
         )}
         {activeTab === "portfolio" && (
           <Portfolio positions={evaluatedPositions} vaults={activeVaults} policy={activePolicy} loading={positionsLoading} onRepairClick={handleRepairClick} onRefresh={isDemoMode ? () => {} : loadPositions} />

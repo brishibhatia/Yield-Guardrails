@@ -30,23 +30,30 @@ export async function fetchEarnVaultsServer(
   chainIds?: number[]
 ): Promise<Vault[]> {
   const url = new URL(`${EARN_BASE_URL}/v1/earn/vaults`);
-  const ids = chainIds ?? [...SUPPORTED_CHAIN_IDS];
-  ids.forEach((id) => url.searchParams.append("chainId", String(id)));
   if (underlyingSymbol) {
     url.searchParams.set("token", underlyingSymbol);
   }
+  // Note: LI.FI Earn API only accepts a single chainId param.
+  // We fetch all and filter client-side to support multiple chains.
 
   const res = await fetch(url.toString(), { headers: serverHeaders() });
-  if (!res.ok) throw new Error(`Failed to fetch vaults: ${res.status}`);
+  if (!res.ok) {
+    const body = await res.text();
+    console.error(`[fetchEarnVaultsServer] ${res.status}: ${body}`);
+    throw new Error(`Failed to fetch vaults: ${res.status} — ${body.slice(0, 200)}`);
+  }
   const data = await res.json();
 
   const rawVaults: unknown[] = Array.isArray(data)
     ? data
     : data?.data ?? data?.vaults ?? [];
 
+  const filterIds = chainIds ?? [...SUPPORTED_CHAIN_IDS];
+
   return rawVaults
     .map((v: unknown) => normalizeVault(v))
-    .filter((v): v is Vault => v !== null);
+    .filter((v): v is Vault => v !== null)
+    .filter((v) => filterIds.includes(v.chainId));
 }
 
 export async function fetchPortfolioPositionsServer(
@@ -79,16 +86,23 @@ export async function fetchComposerQuoteServer(
   url.searchParams.set("toToken", params.toToken);
   url.searchParams.set("fromAmount", params.fromAmount);
   url.searchParams.set("fromAddress", params.fromAddress);
+  url.searchParams.set("toAddress", params.toAddress || params.fromAddress);
   url.searchParams.set("slippage", String(params.slippage ?? 0.03));
 
   // Route preferences
   if (params.order) url.searchParams.set("order", params.order);
-  if (params.preset) url.searchParams.set("preset", params.preset);
+  // Note: 'preset' param removed — LI.FI API returns error 1011 for preset=stablecoin
   if (params.allowBridges?.length) {
     params.allowBridges.forEach((b) => url.searchParams.append("allowBridges", b));
   }
+  if (params.preferredBridges?.length) {
+    params.preferredBridges.forEach((b) => url.searchParams.append("preferBridges", b));
+  }
   if (params.allowExchanges?.length) {
     params.allowExchanges.forEach((e) => url.searchParams.append("allowExchanges", e));
+  }
+  if (params.preferredExchanges?.length) {
+    params.preferredExchanges.forEach((e) => url.searchParams.append("preferExchanges", e));
   }
 
   // Integrator-ready params (from env)
@@ -410,12 +424,15 @@ export interface QuoteParams {
   toToken: string;
   fromAmount: string;
   fromAddress: string;
+  toAddress?: string;
   slippage?: number;
   // Route preferences
   order?: "FASTEST" | "CHEAPEST";
   preset?: string;
   allowBridges?: string[];
+  preferredBridges?: string[];
   allowExchanges?: string[];
+  preferredExchanges?: string[];
 }
 
 export interface QuoteResponse {

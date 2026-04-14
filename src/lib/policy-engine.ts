@@ -141,6 +141,10 @@ export function wouldViolateConcentration(
   const totalValue = existingPositions.reduce((s, p) => s + p.balanceUsd, 0) + depositAmountUsd;
   if (totalValue <= 0) return { ok: true };
 
+  // Skip concentration check for very small portfolios (< $100)
+  // Diversification rules don't make practical sense at this scale
+  if (totalValue < 100) return { ok: true };
+
   // Check protocol concentration after deposit
   const protocolValueAfter =
     existingPositions
@@ -172,6 +176,9 @@ export function checkIdleCash(
   const totalValue = totalDeployed + remainingCash;
 
   if (totalValue <= 0) return { ok: true };
+
+  // Skip idle cash check for very small portfolios (< $100)
+  if (totalValue < 100) return { ok: true };
 
   const idlePct = (remainingCash / totalValue) * 100;
   if (idlePct < policy.minIdleCashPct) {

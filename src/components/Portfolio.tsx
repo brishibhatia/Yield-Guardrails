@@ -56,12 +56,23 @@ export function Portfolio({
       <div className="card animate-fade-in" style={{ padding: 60, textAlign: "center" }}>
         <div style={{ fontSize: 48, marginBottom: 16 }}>◎</div>
         <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>No positions found</div>
-        <p style={{ fontSize: 14, color: "var(--text-secondary)", maxWidth: 400, margin: "0 auto", marginBottom: 20 }}>
-          Connect your wallet and ensure you have active LI.FI Earn positions to see policy violations.
+        <p style={{ fontSize: 14, color: "var(--text-secondary)", maxWidth: 480, margin: "0 auto", marginBottom: 8 }}>
+          The LI.FI Earn portfolio indexer hasn&apos;t detected any positions yet.
+          This can happen if:
         </p>
-        <button className="btn btn-primary" onClick={onRefresh}>
-          Refresh Positions
-        </button>
+        <ul style={{ fontSize: 13, color: "var(--text-muted)", textAlign: "left", maxWidth: 420, margin: "0 auto 20px", listStyle: "disc", paddingLeft: 20 }}>
+          <li>Your deposit is still being indexed (can take minutes to hours)</li>
+          <li>Your position is below the indexer&apos;s minimum threshold</li>
+          <li>Your wallet has no active LI.FI Earn positions</li>
+        </ul>
+        <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+          <button className="btn btn-primary" onClick={onRefresh}>
+            ↻ Try Again
+          </button>
+        </div>
+        <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 16 }}>
+          💡 Use <strong>Demo Mode</strong> to explore the full portfolio experience with seeded positions.
+        </p>
       </div>
     );
   }

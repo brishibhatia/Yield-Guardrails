@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import { Vault, Policy, CHAIN_NAMES, CHAIN_ICONS, SUPPORTED_CHAIN_IDS } from "@/types";
 import { formatCompact, formatApy } from "@/lib/utils";
+import type { LifiChain } from "@/lib/lifi-client";
 
 /** APY trend badge: compare total vs 7d or 30d */
 function trendBadge(vault: Vault): { label: string; color: string } | null {
@@ -23,6 +24,7 @@ export function VaultExplorer({
   onDepositClick,
   lifiChainCount,
   lifiProtocolCount,
+  liveChains,
 }: {
   vaults: Vault[];
   loading: boolean;
@@ -30,6 +32,7 @@ export function VaultExplorer({
   onDepositClick: (vault: Vault) => void;
   lifiChainCount?: number;
   lifiProtocolCount?: number;
+  liveChains?: LifiChain[];
 }) {
   const [chainFilter, setChainFilter] = useState<number | "all">("all");
   const [protocolFilter, setProtocolFilter] = useState<string>("all");
@@ -163,8 +166,11 @@ export function VaultExplorer({
           onChange={(e) => setChainFilter(e.target.value === "all" ? "all" : Number(e.target.value))}
         >
           <option value="all">All Chains</option>
-          {SUPPORTED_CHAIN_IDS.map((id) => (
-            <option key={id} value={id}>{CHAIN_ICONS[id]} {CHAIN_NAMES[id]}</option>
+          {(liveChains && liveChains.length > 0
+            ? liveChains.map(c => ({ id: c.id, name: c.name }))
+            : SUPPORTED_CHAIN_IDS.map(id => ({ id, name: CHAIN_NAMES[id] || `Chain ${id}` }))
+          ).map(({ id, name }) => (
+            <option key={id} value={id}>{CHAIN_ICONS[id] || "⟐"} {name}</option>
           ))}
         </select>
 
@@ -372,8 +378,8 @@ function VaultRow({
         )}
       </div>
 
-      {/* Base/Reward APY breakdown */}
-      {(vault.apyBase !== null || vault.apyReward !== null) && (
+      {/* Base/Reward/1d APY breakdown */}
+      {(vault.apyBase !== null || vault.apyReward !== null || vault.apy1d !== null) && (
         <div style={{ textAlign: "right", minWidth: 70 }}>
           {vault.apyBase !== null && (
             <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>
@@ -383,6 +389,11 @@ function VaultRow({
           {vault.apyReward !== null && vault.apyReward > 0 && (
             <div style={{ fontSize: 11, color: "rgba(139,92,246,0.8)" }}>
               Reward {vault.apyReward.toFixed(2)}%
+            </div>
+          )}
+          {vault.apy1d !== null && (
+            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+              1d {vault.apy1d.toFixed(2)}%
             </div>
           )}
         </div>
@@ -448,9 +459,11 @@ function ComparePanel({
             <th style={{ padding: "8px 10px", color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", textAlign: "right" }}>Total APY</th>
             <th style={{ padding: "8px 10px", color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", textAlign: "right" }}>Base</th>
             <th style={{ padding: "8px 10px", color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", textAlign: "right" }}>Reward</th>
+            <th style={{ padding: "8px 10px", color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", textAlign: "right" }}>1d</th>
             <th style={{ padding: "8px 10px", color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", textAlign: "right" }}>7d</th>
             <th style={{ padding: "8px 10px", color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", textAlign: "right" }}>30d</th>
             <th style={{ padding: "8px 10px", color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", textAlign: "right" }}>TVL</th>
+            <th style={{ padding: "8px 10px", color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", textAlign: "center" }}>Tags</th>
             <th style={{ padding: "8px 10px", color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", textAlign: "center" }}>Trend</th>
             <th style={{ padding: "8px 10px", color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", textAlign: "center" }}>Status</th>
             <th style={{ padding: "8px 10px", color: "var(--text-muted)", fontSize: 11, textTransform: "uppercase", textAlign: "center" }}>Policy</th>
@@ -470,9 +483,15 @@ function ComparePanel({
                 <td style={{ padding: "10px 10px", textAlign: "right", fontWeight: 700, color: "var(--compliant)" }}>{formatApy(v.apyTotal)}</td>
                 <td style={{ padding: "10px 10px", textAlign: "right", color: "var(--text-secondary)" }}>{v.apyBase !== null ? `${v.apyBase.toFixed(2)}%` : "—"}</td>
                 <td style={{ padding: "10px 10px", textAlign: "right", color: "rgba(139,92,246,0.8)" }}>{v.apyReward !== null && v.apyReward > 0 ? `${v.apyReward.toFixed(2)}%` : "—"}</td>
+                <td style={{ padding: "10px 10px", textAlign: "right", color: "var(--text-secondary)" }}>{v.apy1d !== null ? `${v.apy1d.toFixed(2)}%` : "—"}</td>
                 <td style={{ padding: "10px 10px", textAlign: "right", color: "var(--text-secondary)" }}>{v.apy7d !== null ? `${v.apy7d.toFixed(2)}%` : "—"}</td>
                 <td style={{ padding: "10px 10px", textAlign: "right", color: "var(--text-secondary)" }}>{v.apy30d !== null ? `${v.apy30d.toFixed(2)}%` : "—"}</td>
                 <td style={{ padding: "10px 10px", textAlign: "right", fontWeight: 600 }}>{formatCompact(v.tvlUsd)}</td>
+                <td style={{ padding: "10px 10px", textAlign: "center" }}>
+                  {v.tags.length > 0 ? v.tags.slice(0, 2).map(t => (
+                    <span key={t} style={{ fontSize: 10, padding: "1px 5px", borderRadius: 3, background: "var(--bg-primary)", border: "1px solid var(--border-subtle)", color: "var(--text-muted)", marginRight: 2, display: "inline-block" }}>{t}</span>
+                  )) : "—"}
+                </td>
                 <td style={{ padding: "10px 10px", textAlign: "center" }}>{trend ? <span style={{ fontSize: 11, color: trend.color }}>{trend.label}</span> : "—"}</td>
                 <td style={{ padding: "10px 10px", textAlign: "center" }}>
                   {v.isTransactional ? (

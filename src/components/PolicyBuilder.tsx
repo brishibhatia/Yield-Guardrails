@@ -1,23 +1,57 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Policy, CHAIN_NAMES, CHAIN_ICONS, SUPPORTED_CHAIN_IDS } from "@/types";
 import { loadPolicy, savePolicy } from "@/lib/store";
+import { fetchTools, ToolInfo } from "@/lib/lifi-client";
+import type { LifiChain } from "@/lib/lifi-client";
 
 export function PolicyBuilder({
   onPolicyChange,
   availableProtocols,
+  liveChains,
 }: {
   onPolicyChange: (policy: Policy) => void;
   availableProtocols: string[];
+  liveChains?: LifiChain[];
 }) {
   const [policy, setPolicy] = useState<Policy>(() => loadPolicy());
   const [saved, setSaved] = useState(false);
   const [newProtocol, setNewProtocol] = useState("");
+  const [showRouteSettings, setShowRouteSettings] = useState(false);
+
+  // Tools data from /api/tools
+  const [bridges, setBridges] = useState<ToolInfo[]>([]);
+  const [exchanges, setExchanges] = useState<ToolInfo[]>([]);
+  const [toolsLoading, setToolsLoading] = useState(false);
+
+  // Derive chain options: live chains if available, fallback to SUPPORTED_CHAIN_IDS
+  const chainOptions: { id: number; name: string }[] = liveChains && liveChains.length > 0
+    ? liveChains.map(c => ({ id: c.id, name: c.name }))
+    : SUPPORTED_CHAIN_IDS.map(id => ({ id, name: CHAIN_NAMES[id] || `Chain ${id}` }));
 
   useEffect(() => {
     onPolicyChange(policy);
   }, [policy, onPolicyChange]);
+
+  // Fetch tools when route settings are opened
+  const loadTools = useCallback(async () => {
+    if (bridges.length > 0 || toolsLoading) return;
+    setToolsLoading(true);
+    try {
+      const tools = await fetchTools();
+      setBridges(tools.bridges || []);
+      setExchanges(tools.exchanges || []);
+    } catch (err) {
+      console.error("Failed to load tools:", err);
+    } finally {
+      setToolsLoading(false);
+    }
+  }, [bridges.length, toolsLoading]);
+
+  useEffect(() => {
+    if (showRouteSettings) loadTools();
+  }, [showRouteSettings, loadTools]);
 
   const handleSave = () => {
     savePolicy(policy);
@@ -52,6 +86,24 @@ export function PolicyBuilder({
     }));
   };
 
+  // Route preference helpers
+  const updateRoutePrefs = (partial: Partial<Policy["routePreferences"]>) => {
+    setPolicy((prev) => ({
+      ...prev,
+      routePreferences: { ...prev.routePreferences, ...partial },
+    }));
+  };
+
+  const toggleListItem = (field: "allowBridges" | "preferredBridges" | "allowExchanges" | "preferredExchanges", key: string) => {
+    setPolicy((prev) => {
+      const current = prev.routePreferences[field];
+      const next = current.includes(key)
+        ? current.filter(k => k !== key)
+        : [...current, key];
+      return { ...prev, routePreferences: { ...prev.routePreferences, [field]: next } };
+    });
+  };
+
   return (
     <div className="animate-fade-in" style={{ display: "flex", flexDirection: "column", gap: 24, maxWidth: 720 }}>
       <div>
@@ -74,13 +126,18 @@ export function PolicyBuilder({
         />
       </div>
 
-      {/* Allowed Chains */}
+      {/* Allowed Chains — uses live chain data when available */}
       <div className="card" style={{ padding: 24 }}>
         <label style={{ fontSize: 12, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 12, display: "block" }}>
           Allowed Chains
+          {liveChains && liveChains.length > 0 && (
+            <span style={{ fontWeight: 400, textTransform: "none", marginLeft: 8, color: "rgba(139,92,246,0.7)", fontSize: 11 }}>
+              {liveChains.length} chains from LI.FI
+            </span>
+          )}
         </label>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          {SUPPORTED_CHAIN_IDS.map((id) => {
+          {chainOptions.map(({ id, name }) => {
             const active = policy.allowedChainIds.includes(id);
             return (
               <button
@@ -101,8 +158,8 @@ export function PolicyBuilder({
                   transition: "all 0.2s ease",
                 }}
               >
-                <span>{CHAIN_ICONS[id]}</span>
-                {CHAIN_NAMES[id]}
+                <span>{CHAIN_ICONS[id] || "⟐"}</span>
+                {name}
                 {active && <span style={{ fontSize: 12 }}>✓</span>}
               </button>
             );
@@ -231,6 +288,127 @@ export function PolicyBuilder({
         </div>
       </div>
 
+      {/* Advanced Route Settings — collapsible */}
+      <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+        <button
+          onClick={() => setShowRouteSettings(!showRouteSettings)}
+          style={{
+            width: "100%",
+            padding: "16px 24px",
+            background: "none",
+            border: "none",
+            borderBottom: showRouteSettings ? "1px solid var(--border-subtle)" : "none",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            cursor: "pointer",
+            color: "var(--text-primary)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>⚙ Advanced Route Settings</span>
+            <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "rgba(139,92,246,0.1)", color: "rgba(139,92,246,0.8)" }}>
+              LI.FI Controls
+            </span>
+          </div>
+          <span style={{ fontSize: 16, transform: showRouteSettings ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>▾</span>
+        </button>
+
+        {showRouteSettings && (
+          <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 20 }}>
+            {/* Route Order + Preset */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <div>
+                <label style={{ fontSize: 12, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 8, display: "block" }}>
+                  Route Order
+                </label>
+                <div className="tab-nav">
+                  <button
+                    className={`tab-btn ${policy.routePreferences.order === "CHEAPEST" ? "tab-btn-active" : ""}`}
+                    onClick={() => updateRoutePrefs({ order: "CHEAPEST" })}
+                    style={{ padding: "8px 16px", fontSize: 13 }}
+                  >
+                    💰 Cheapest
+                  </button>
+                  <button
+                    className={`tab-btn ${policy.routePreferences.order === "FASTEST" ? "tab-btn-active" : ""}`}
+                    onClick={() => updateRoutePrefs({ order: "FASTEST" })}
+                    style={{ padding: "8px 16px", fontSize: 13 }}
+                  >
+                    ⚡ Fastest
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: 12, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 8, display: "block" }}>
+                  Preset
+                </label>
+                <div className="tab-nav">
+                  <button
+                    className={`tab-btn ${policy.routePreferences.preset === "stablecoin" ? "tab-btn-active" : ""}`}
+                    onClick={() => updateRoutePrefs({ preset: policy.routePreferences.preset === "stablecoin" ? "" : "stablecoin" })}
+                    style={{ padding: "8px 16px", fontSize: 13 }}
+                  >
+                    🪙 Stablecoin
+                  </button>
+                </div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                  Prefer stablecoin-only routes
+                </div>
+              </div>
+            </div>
+
+            {/* Bridges */}
+            {toolsLoading ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: 12, color: "var(--text-secondary)", fontSize: 13 }}>
+                <div className="spinner" style={{ width: 16, height: 16 }} />
+                Loading bridges & exchanges from LI.FI...
+              </div>
+            ) : bridges.length > 0 && (
+              <>
+                <div>
+                  <label style={{ fontSize: 12, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 10, display: "block" }}>
+                    Bridges
+                    <span style={{ fontWeight: 400, textTransform: "none", marginLeft: 8, fontSize: 11 }}>
+                      ({bridges.length} available)
+                    </span>
+                  </label>
+                  <ToolSelector
+                    tools={bridges}
+                    allowed={policy.routePreferences.allowBridges}
+                    preferred={policy.routePreferences.preferredBridges}
+                    onToggleAllow={(key) => toggleListItem("allowBridges", key)}
+                    onTogglePreferred={(key) => toggleListItem("preferredBridges", key)}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: 12, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 10, display: "block" }}>
+                    Exchanges
+                    <span style={{ fontWeight: 400, textTransform: "none", marginLeft: 8, fontSize: 11 }}>
+                      ({exchanges.length} available)
+                    </span>
+                  </label>
+                  <ToolSelector
+                    tools={exchanges}
+                    allowed={policy.routePreferences.allowExchanges}
+                    preferred={policy.routePreferences.preferredExchanges}
+                    onToggleAllow={(key) => toggleListItem("allowExchanges", key)}
+                    onTogglePreferred={(key) => toggleListItem("preferredExchanges", key)}
+                  />
+                </div>
+              </>
+            )}
+
+            <div style={{ fontSize: 11, color: "var(--text-muted)", padding: "8px 0", borderTop: "1px solid var(--border-subtle)" }}>
+              💡 <strong>Allowed</strong> = restrict routes to these tools only. <strong>Preferred</strong> = suggest these when possible.
+              Leave both empty to allow all.
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Save */}
       <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
         <button className="btn btn-primary btn-lg" onClick={handleSave}>
@@ -251,6 +429,78 @@ export function PolicyBuilder({
           </span>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Tool selector: compact grid of bridge/exchange pills with allow/preferred toggles */
+function ToolSelector({
+  tools,
+  allowed,
+  preferred,
+  onToggleAllow,
+  onTogglePreferred,
+}: {
+  tools: ToolInfo[];
+  allowed: string[];
+  preferred: string[];
+  onToggleAllow: (key: string) => void;
+  onTogglePreferred: (key: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const visibleTools = expanded ? tools : tools.slice(0, 8);
+
+  return (
+    <div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {visibleTools.map((tool) => {
+          const isAllowed = allowed.includes(tool.key);
+          const isPreferred = preferred.includes(tool.key);
+          return (
+            <div
+              key={tool.key}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                padding: "4px 10px",
+                borderRadius: 6,
+                border: `1px solid ${isAllowed ? "rgba(16,185,129,0.4)" : isPreferred ? "rgba(139,92,246,0.4)" : "var(--border-subtle)"}`,
+                background: isAllowed ? "rgba(16,185,129,0.08)" : isPreferred ? "rgba(139,92,246,0.08)" : "var(--bg-primary)",
+                fontSize: 12,
+                cursor: "pointer",
+                transition: "all 0.15s",
+              }}
+            >
+              <span
+                onClick={() => onToggleAllow(tool.key)}
+                title="Toggle allowed"
+                style={{ color: isAllowed ? "var(--compliant)" : "var(--text-muted)", fontWeight: isAllowed ? 700 : 400 }}
+              >
+                {isAllowed ? "✓" : "○"}
+              </span>
+              <span style={{ color: isAllowed || isPreferred ? "var(--text-primary)" : "var(--text-secondary)" }}>
+                {tool.name}
+              </span>
+              <span
+                onClick={() => onTogglePreferred(tool.key)}
+                title="Toggle preferred"
+                style={{ color: isPreferred ? "rgba(139,92,246,0.9)" : "var(--text-muted)", cursor: "pointer", fontSize: 11 }}
+              >
+                {isPreferred ? "★" : "☆"}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {tools.length > 8 && (
+        <button
+          onClick={() => setExpanded(!expanded)}
+          style={{ background: "none", border: "none", color: "var(--accent-light)", fontSize: 12, marginTop: 6, cursor: "pointer", padding: 0 }}
+        >
+          {expanded ? "Show less" : `Show all ${tools.length}`}
+        </button>
+      )}
     </div>
   );
 }

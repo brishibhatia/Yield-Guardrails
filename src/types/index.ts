@@ -6,7 +6,9 @@ export type RoutePreferences = {
   order: "FASTEST" | "CHEAPEST";
   preset: "stablecoin" | "";
   allowBridges: string[];
+  preferredBridges: string[];
   allowExchanges: string[];
+  preferredExchanges: string[];
 };
 
 export type Policy = {
@@ -140,7 +142,9 @@ export const DEFAULT_POLICY: Policy = {
     order: "CHEAPEST",
     preset: "stablecoin",
     allowBridges: [],
+    preferredBridges: [],
     allowExchanges: [],
+    preferredExchanges: [],
   },
   createdAt: Date.now(),
   updatedAt: Date.now(),

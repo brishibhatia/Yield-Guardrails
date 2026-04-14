@@ -7,6 +7,7 @@ import {
   fetchComposerQuote,
   fetchTransactionStatus,
   fetchPortfolioPositions,
+  fetchEarnVaults,
   extractRouteInfo,
   USDC_ADDRESSES,
   QuoteResponse,
@@ -18,6 +19,7 @@ import {
   checkIdleCash,
   simulateRepair,
   explainVaultCompliance,
+  computePortfolioSnapshot,
   PortfolioSnapshot,
 } from "@/lib/policy-engine";
 
@@ -57,7 +59,8 @@ export function RepairFlow({
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Portfolio verification state (live mode only)
-  const [verificationStatus, setVerificationStatus] = useState<"idle" | "verifying" | "verified" | "timeout">("idle");
+  const [verificationStatus, setVerificationStatus] = useState<"idle" | "verifying" | "verified" | "partial" | "timeout">("idle");
+  const [verifiedSnapshot, setVerifiedSnapshot] = useState<PortfolioSnapshot | null>(null);
 
   const isRepair = !!sourcePosition;
   const isCrossChain = fromChainId !== targetVault.chainId;
@@ -266,6 +269,13 @@ export function RepairFlow({
         fromChainId, fromToken,
         toChainId: targetVault.chainId, toToken: targetVault.address,
         fromAmount, fromAddress: effectiveAddress, slippage: 0.03,
+        // Wire route preferences from policy
+        order: policy.routePreferences.order,
+        preset: policy.routePreferences.preset || undefined,
+        allowBridges: policy.routePreferences.allowBridges.length > 0 ? policy.routePreferences.allowBridges : undefined,
+        preferredBridges: policy.routePreferences.preferredBridges.length > 0 ? policy.routePreferences.preferredBridges : undefined,
+        allowExchanges: policy.routePreferences.allowExchanges.length > 0 ? policy.routePreferences.allowExchanges : undefined,
+        preferredExchanges: policy.routePreferences.preferredExchanges.length > 0 ? policy.routePreferences.preferredExchanges : undefined,
       });
       setQuote(q);
       setRouteInfo(extractRouteInfo(q));
@@ -290,9 +300,20 @@ export function RepairFlow({
             { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> } | undefined
         : undefined;
       if (!eth) return true;
-      const allowanceData = "0xdd62ed3e" + address.slice(2).padStart(64, "0") + approvalAddr.slice(2).padStart(64, "0");
-      const allowanceHex = (await eth.request({ method: "eth_call", params: [{ to: tokenAddr, data: allowanceData }, "latest"] })) as string;
-      const allowance = BigInt(allowanceHex || "0");
+
+      // Check current allowance (safely handle non-standard responses)
+      let allowance = BigInt(0);
+      try {
+        const allowanceData = "0xdd62ed3e" + address.slice(2).padStart(64, "0") + approvalAddr.slice(2).padStart(64, "0");
+        const allowanceHex = (await eth.request({ method: "eth_call", params: [{ to: tokenAddr, data: allowanceData }, "latest"] })) as string;
+        if (allowanceHex && allowanceHex.length > 2) {
+          allowance = BigInt(allowanceHex);
+        }
+      } catch {
+        // If allowance check fails, assume 0 and proceed to approve
+        allowance = BigInt(0);
+      }
+
       const fromAmount = deriveFromAmount(amount);
       const needed = fromAmount ? BigInt(fromAmount) : BigInt(0);
       if (needed > BigInt(0) && allowance >= needed) return true;
@@ -301,7 +322,15 @@ export function RepairFlow({
       const approveData = "0x095ea7b3" + approvalAddr.slice(2).padStart(64, "0") + maxApproval.slice(2);
       await sendTransaction({ to: tokenAddr, data: approveData, chainId: fromChainId });
       return true;
-    } catch (err) {
+    } catch (err: unknown) {
+      // User rejected in MetaMask — not a real error
+      const code = (err as { code?: number })?.code;
+      const msg = err instanceof Error ? err.message : "";
+      if (code === 4001 || msg.includes("rejected") || msg.includes("denied") || msg.includes("cancelled")) {
+        setError("Approval cancelled by user.");
+        setStep("input");
+        return false;
+      }
       console.error("Approval failed:", err);
       setError("Token approval failed. Please try again.");
       setStep("error");
@@ -388,8 +417,15 @@ export function RepairFlow({
         pollCrossChainStatus(hash);
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Transaction failed");
-      setStep("error");
+      const code = (err as { code?: number })?.code;
+      const msg = err instanceof Error ? err.message : "";
+      if (code === 4001 || msg.includes("rejected") || msg.includes("denied") || msg.includes("cancelled")) {
+        setError("Transaction cancelled by user.");
+        setStep("input");
+      } else {
+        setError(msg || "Transaction failed");
+        setStep("error");
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quote, isDemoMode, isCrossChain, handleApprovalIfNeeded, sendTransaction, amount, fromChainId, targetVault, isRepair, pollCrossChainStatus]);
@@ -404,12 +440,35 @@ export function RepairFlow({
       try {
         const updatedPositions = await fetchPortfolioPositions(address);
         // Check if the target vault appears in the updated positions
-        const found = updatedPositions.some(
+        const targetFound = updatedPositions.some(
           (p) => p.vaultAddress.toLowerCase() === targetVault.address.toLowerCase()
             && p.chainId === targetVault.chainId
         );
-        if (found) {
+        // Check if source position is reduced or gone (for repairs)
+        let sourceReduced = true;
+        if (isRepair && sourcePosition) {
+          const sourceStill = updatedPositions.find(
+            (p) => p.vaultAddress.toLowerCase() === sourcePosition.vaultAddress.toLowerCase()
+              && p.chainId === sourcePosition.chainId
+          );
+          sourceReduced = !sourceStill || sourceStill.balanceUsd < sourcePosition.balanceUsd * 0.95;
+        }
+
+        if (targetFound && sourceReduced) {
+          // Full verification — recompute health from refreshed portfolio
+          try {
+            const freshVaults = await fetchEarnVaults("USDC");
+            const snap = computePortfolioSnapshot(updatedPositions, policy, freshVaults.length > 0 ? freshVaults : vaults);
+            setVerifiedSnapshot(snap);
+          } catch {
+            // Fall back without snapshot
+          }
           setVerificationStatus("verified");
+          return;
+        }
+        if (targetFound && !sourceReduced) {
+          // Partial: target appeared but source not yet reduced
+          setVerificationStatus("partial");
           return;
         }
       } catch {
@@ -417,7 +476,7 @@ export function RepairFlow({
       }
     }
     setVerificationStatus("timeout");
-  }, [isDemoMode, address, targetVault]);
+  }, [isDemoMode, address, targetVault, isRepair, sourcePosition, policy, vaults]);
 
   const metadataMissing = isRepair && sourcePosition?.assetDecimals === null && !sourcePosition?.balanceAtomic;
   const hasBlockingWarnings = policyWarnings.length > 0;
@@ -665,14 +724,14 @@ export function RepairFlow({
                       {verificationStatus === "verified" ? "✓ Verified After-State" : verificationStatus === "verifying" ? "⟳ Verifying After-State..." : "✓ After-State"}
                     </div>
                     <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: isDemoMode ? "rgba(139,92,246,0.15)" : verificationStatus === "verified" ? "rgba(16,185,129,0.15)" : "rgba(234,179,8,0.15)", color: isDemoMode ? "rgba(167,139,250,0.9)" : verificationStatus === "verified" ? "rgba(16,185,129,0.9)" : "rgba(234,179,8,0.9)" }}>
-                      {isDemoMode ? "Simulated in demo mode" : verificationStatus === "verified" ? "Verified by LI.FI Earn portfolio" : verificationStatus === "verifying" ? "Verifying via Earn API..." : verificationStatus === "timeout" ? "Transaction confirmed; verification pending" : "Verified by portfolio"}
+                      {isDemoMode ? "Simulated in demo mode" : verificationStatus === "verified" ? "Verified by LI.FI Earn portfolio" : verificationStatus === "verifying" ? "Verifying via Earn API..." : verificationStatus === "partial" ? "Target verified; source reduction pending" : verificationStatus === "timeout" ? "Transaction confirmed; portfolio verification pending" : "Verified by portfolio"}
                     </span>
                   </div>
 
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    <DeltaRow label="Health Score" before={`${delta.before.healthScore}/100`} after={`${delta.after.healthScore}/100`} improved={delta.after.healthScore > delta.before.healthScore} />
-                    <DeltaRow label="Violations" before={`${delta.before.violationCount}`} after={`${delta.after.violationCount}`} improved={delta.after.violationCount < delta.before.violationCount} />
-                    <DeltaRow label="Warnings" before={`${delta.before.warningCount}`} after={`${delta.after.warningCount}`} improved={delta.after.warningCount < delta.before.warningCount} />
+                    <DeltaRow label="Health Score" before={`${delta.before.healthScore}/100`} after={verifiedSnapshot ? `${verifiedSnapshot.healthScore}/100` : `${delta.after.healthScore}/100`} improved={verifiedSnapshot ? verifiedSnapshot.healthScore > delta.before.healthScore : delta.after.healthScore > delta.before.healthScore} />
+                    <DeltaRow label="Violations" before={`${delta.before.violationCount}`} after={verifiedSnapshot ? `${verifiedSnapshot.violationCount}` : `${delta.after.violationCount}`} improved={verifiedSnapshot ? verifiedSnapshot.violationCount < delta.before.violationCount : delta.after.violationCount < delta.before.violationCount} />
+                    <DeltaRow label="Warnings" before={`${delta.before.warningCount}`} after={verifiedSnapshot ? `${verifiedSnapshot.warningCount}` : `${delta.after.warningCount}`} improved={verifiedSnapshot ? verifiedSnapshot.warningCount < delta.before.warningCount : delta.after.warningCount < delta.before.warningCount} />
                     {delta.before.protocolExposures[0] && (
                       <DeltaRow
                         label={`${delta.before.protocolExposures[0].protocol} Exposure`}
