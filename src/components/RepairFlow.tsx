@@ -328,7 +328,7 @@ export function RepairFlow({
       const msg = err instanceof Error ? err.message : "";
       if (code === 4001 || msg.includes("rejected") || msg.includes("denied") || msg.includes("cancelled")) {
         setError("Approval cancelled by user.");
-        setStep("input");
+        setStep("configure");
         return false;
       }
       console.error("Approval failed:", err);
@@ -421,7 +421,7 @@ export function RepairFlow({
       const msg = err instanceof Error ? err.message : "";
       if (code === 4001 || msg.includes("rejected") || msg.includes("denied") || msg.includes("cancelled")) {
         setError("Transaction cancelled by user.");
-        setStep("input");
+        setStep("configure");
       } else {
         setError(msg || "Transaction failed");
         setStep("error");

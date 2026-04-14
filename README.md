@@ -17,6 +17,10 @@ Built for the **LI.FI DeFi Mullet Hackathon**. The core workflow:
 
 Every step is deterministic, explainable, and auditable. No AI. No black boxes.
 
+🌐 **Live Demo**: [https://lifiproject.vercel.app](https://lifiproject.vercel.app)
+
+🎬 **Demo Video**: [Watch on Google Drive](https://drive.google.com/file/d/1qa_WFMdpkUMVWYlFi4Wl809nCdMwbclU/view?usp=sharing)
+
 **✅ Live-tested on Base mainnet** — real USDC deposit executed through LI.FI Composer, confirmed on-chain: [BaseScan tx](https://basescan.org/tx/0xa25532fa266cc6ebca7e576ab1bfea2ba515ea0c17020ef5a956e0006fdb69b6)
 
 ---
